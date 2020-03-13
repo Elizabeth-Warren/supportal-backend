@@ -1,0 +1,274 @@
+# supportal
+
+service: supportal
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+custom:
+  stage: ${opt:stage, env:STAGE, "dev"}
+  infrastructure: ${opt:infrastructure, env:INFRASTRUCTURE, "dev"}
+  projectRoot: ${env:GITHUB_WORKSPACE, "${env:PWD}/../"}
+
+  wsgi:
+    app: supportal.wsgi.application
+
+  pythonRequirements:
+    dockerizePip: true
+    slim: true
+    useDownloadCache: false
+    useStaticCache: false
+  # We created these by hand
+  cognito:
+    dev:
+      arn: xxxx
+      name: xxxx
+      clientId: xxxx
+    prod:
+      arn: xxxx
+      name: xxxx
+      clientId: xxxx
+  baseUrls:
+    dev: "https://staging--ew-switchboard.netlify.com/"
+    prod: "https://switchboard.elizabethwarren.com"
+
+  # This public layer is maintained by development seed
+  layers:
+    - arn:aws:lambda:us-east-1:552188055668:layer:geolambda:1
+
+  deploy:
+    # Users can define these parameters in SSM (they will be looked up at deploy time)
+    # or in the deploy environment or inline
+    bucket_name: ${ssm:${BUCKET NAME~true}
+    bucket_arn: ${ssm:${BUCKET ARN~true}
+
+  vpcConfig:
+    subnetIds:
+      # Users can define these parameters in SSM (they will be looked up at deploy time)
+      # or in the deploy environment or inline
+      - "${ssm:${SUBNET ID}~true}"
+      ...
+    securityGroupIds:
+      # Users can define this parameter in SSM (it will be looked up at deploy time)
+      # or in the deploy environment or inline
+      - "${ssm:${SECURITY GROUP ID}~true}"
+
+  customDomain:
+    domainName: DOMAIN NAME
+    stage: ${self:custom.stage}
+    certificateName: "*.elizabethwarren.codes"
+    createRoute53Record: true
+    securityPolicy: tls_1_2 # current top tier
+
+  associateWaf:
+    # OPTIONAL. A WAF is not strictly required, but it is generally useful to have
+    # one to handle IP-level rate limiting
+    name: WAF NAME
+
+  googleDocsPrio:
+    # These Google sheets are used for override behavior. Users need to make their
+    # own and secure machine credentials to access those sheets.
+    dev:
+      url: "https://docs.google.com/spreadsheets/d/GOOGLE SPREADSHEET ID"
+    prod:
+      url: "https://docs.google.com/spreadsheets/d/GOOGLE SPREADSHEET ID"
+
+  mobilizeAmerica:
+    # Users can define these parameters in SSM (they will be looked up at deploy time)
+    # or in the deploy environment or inline
+    dev:
+      baseUrl: "https://staging-api.mobilize.us/v1"
+      orgId: 95
+      apiKey: "${ssm:${STAGING API KEY}~true}"
+      defaultVisibility: "PUBLIC"
+    prod:
+      baseUrl: "https://api.mobilize.us/v1"
+      orgId: 1316
+      apiKey: "${ssm:${PRODUCTION API KEY}~true}"
+      defaultVisibility: "PUBLIC"
+
+  alerts:
+    nameTemplate: $[functionName]-$[metricName]-Alarm
+    topics:
+      alarm:
+        topic: ${SNS TOPIC ARN}
+    definitions:
+      functionInvocations:
+        threshold: 5000
+      functionDuration:
+        threshold: 10000
+    alarms:
+      - functionThrottles
+      - functionErrors
+      - functionInvocations
+      - functionDuration
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: ${opt:region, env:REGION, "us-east-1"}
+  stage: ${self:custom.stage}
+  deploymentBucket:
+    name: ${self:custom.deploy.bucket_name}
+    blockPublicAccess: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "ssm:GetParameter"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - "cognito-idp:AdminCreateUser"
+        - "cognito-idp:AdminGetUser"
+        - "cognito-idp:AdminUpdateUserAttributes"
+      Resource: "${self:custom.cognito.${self:custom.infrastructure}.arn}"
+    - Effect: Allow
+      Action:
+        - cloudwatch:PutMetricData
+      Resource: "*"
+    - Effect: Allow
+      Action: events:PutEvents
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - "ses:CreateTemplate"
+        - "ses:SendEmail"
+        - "ses:SendTemplatedEmail"
+        - "ses:SendBulkTemplatedEmail"
+        - "ses:UpdateTemplate"
+      Resource: "*"
+
+  environment:
+    STAGE: ${self:custom.stage}
+    INFRASTRUCTURE: ${self:custom.infrastructure}
+    SUPPORTAL_BASE_URL: "${self:custom.baseUrls.${self:custom.infrastructure}}"
+    PRIORITIZATIONS_META: "${self:custom.googleDocsPrio.${self:custom.infrastructure}.url}"
+    GDAL_LIBRARY_PATH: "/opt/lib/libgdal.so"
+    MOBILIZE_AMERICA_BASE_URL: "${self:custom.mobilizeAmerica.${self:custom.infrastructure}.baseUrl}"
+    MOBILIZE_AMERICA_ORG_ID: "${self:custom.mobilizeAmerica.${self:custom.infrastructure}.orgId}"
+    MOBILIZE_AMERICA_API_KEY: "${self:custom.mobilizeAmerica.${self:custom.infrastructure}.apiKey}"
+    MOBILIZE_AMERICA_DEFAULT_VISIBILITY: "${self:custom.mobilizeAmerica.${self:custom.infrastructure}.defaultVisibility}"
+    COGNITO_USER_POOL: "${self:custom.cognito.${self:custom.infrastructure}.name}"
+    COGNITO_USER_LOGIN_CLIENT_ID: "${self:custom.cognito.${self:custom.infrastructure}.clientId}"
+
+    CONFIGURATION_SET_NAME: SES CONFIGURATION SET NAME
+
+    # Users can define these parameters in SSM (they will be looked up at deploy time)
+    # or in the deploy environment or inline. Secrets like this are best maintained
+    # in something like SSM, but careful use of environment variables works here too!
+    DJANGO_SECRET_KEY: "${ssm:${DJANGO_SECRET_KEY}}"
+    GOOGLE_MAPS_API_KEY: "${ssm:${GOOGLE_MAPS_API_KEY}}"
+    POSTGRES_HOST: "${ssm:${POSTGRES_HOST}}"
+    POSTGRES_PASSWORD: "${ssm:${POSTGRES_PASSWORD}}"
+    POSTGRES_USER: "${ssm:${POSTGRES_USER}}"
+    SHARED_REDIS_HOST: "${ssm:${SHARED_REDIS_HOST}}"
+    GOOGLE_DOCS_CREDENTIALS: "${ssm:${GOOGLE_DOCS_CREDENTIALS}}"
+
+
+# Packaging individually is slower, but we _have_ to do it so that we can sneakily
+# deploy the preflight lambda before we deploy the entire stack
+package:
+  excludeDevDependencies: true
+  individually: true
+  exclude:
+    - ".pytest_cache/**"
+    - "node_modules/**"
+    - ".vscode/**"
+
+functions:
+  server:
+    name: ${self:custom.stage}-supportal-server
+    handler: wsgi_handler.handler
+    events:
+      - http: ANY /
+      - http: ANY {proxy+}
+      - schedule:
+          rate: rate(4 minutes)
+    timeout: 30
+    layers: ${self:custom.layers}
+    vpc: ${self:custom.vpcConfig}
+  expire:
+    name: ${self:custom.stage}-supportal-expire-assignments
+    handler: scheduled_commands.expire_assignments
+    layers: ${self:custom.layers}
+    vpc: ${self:custom.vpcConfig}
+    events:
+      - schedule:
+          rate: rate(1 hour)
+    timeout: 60
+    alarms:
+      - name: functionDuration
+        threshold: 60000
+  import_mobilize_america_events:
+    name: ${self:custom.stage}-import-mobilize-america-events
+    handler: scheduled_commands.import_mobilize_america_events
+    layers: ${self:custom.layers}
+    vpc: ${self:custom.vpcConfig}
+    events:
+      - schedule:
+          rate: rate(10 minutes)
+    timeout: 600
+    alarms:
+      - name: functionDuration
+        threshold: 600000
+  update_prioritization:
+    name: ${self:custom.stage}-update-prioritization
+    handler: scheduled_commands.update_prioritization
+    layers: ${self:custom.layers}
+    vpc: ${self:custom.vpcConfig}
+    events:
+      - schedule:
+          rate: rate(20 minutes)
+    timeout: 600
+    alarms:
+      - name: functionDuration
+        threshold: 600000
+  update_prioritization_meta:
+    name: ${self:custom.stage}-update-prioritization-meta
+    handler: scheduled_commands.update_prioritization_meta
+    layers: ${self:custom.layers}
+    vpc: ${self:custom.vpcConfig}
+    events:
+      - schedule:
+          rate: rate(20 minutes)
+    timeout: 600
+    alarms:
+      - name: functionDuration
+        threshold: 600000
+  email_users_with_expiring_assignments:
+    name: ${self:custom.stage}-supportal-email-expiring
+    handler: scheduled_commands.email_users_with_expiring_assignments
+    layers: ${self:custom.layers}
+    vpc: ${self:custom.vpcConfig}
+    events:
+      - schedule: cron(0 14 * * ? *)
+    timeout: 60
+    alarms:
+      - name: functionDuration
+        threshold: 60000
+  email_inactive_users:
+    name: ${self:custom.stage}-supportal-email-inactive-users
+    handler: scheduled_commands.email_inactive_users
+    layers: ${self:custom.layers}
+    vpc: ${self:custom.vpcConfig}
+    events:
+      - schedule: cron(0 14 * * ? *)
+    timeout: 60
+    alarms:
+      - name: functionDuration
+        threshold: 60000
+  preflight:
+    name: ${self:custom.stage}-supportal-preflight
+    handler: preflight.handle
+    layers: ${self:custom.layers}
+    vpc: ${self:custom.vpcConfig}
+    timeout: 60
+    alarms:
+      - name: functionDuration
+        threshold: 60000
+
+plugins:
+  - serverless-wsgi
+  - serverless-python-requirements
+  - serverless-domain-manager
+  - serverless-associate-waf
+  - serverless-plugin-aws-alerts

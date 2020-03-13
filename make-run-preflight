@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+if ! sls deploy list functions -f preflight -s $STAGE --infrastructure $INFRASTRUCTURE; then
+	echo "Preflight is not available, so we cannot replace the function. Skipping..."
+else
+	sls invoke -f preflight -s $STAGE --infrastructure $INFRASTRUCTURE
+fi
+# DO NOT ADD ANYTHING TO THIS SCRIPT

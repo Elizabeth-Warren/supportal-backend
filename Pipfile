@@ -27,7 +27,7 @@ django-filter = "==2.2.0"
 django-localflavor = "==2.2"
 django-phonenumber-field = "==3.0.1"
 django-s3-storage = "==0.12.5"
-djangorestframework = "==3.10.3"
+djangorestframework = "==3.11.2"
 # drf-yasg could be replaced with drf's internal openapi schema generator
 # when we bump to the next version. We are currently seeing this issue:
 # https://github.com/encode/django-rest-framework/issues/6941
